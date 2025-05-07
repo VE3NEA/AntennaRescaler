@@ -1,0 +1,5 @@
+PyNEC
+numpy
+scipy 
+matplotlib
+jupyterlab
