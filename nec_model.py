@@ -1,10 +1,10 @@
 # Copyright (c) Ales Shovkoplyas VE3NEA
 
+import copy
 from PyNEC import *
-import scipy.optimize 
 import numpy as np
 import scipy
-import copy
+import scipy.optimize 
 
 from nec_cards import *
 from sweep_results import *
@@ -34,7 +34,6 @@ class NecModel:
 
     def from_text(self, text):
         for line in text.split("\n"):
-            # line = line.strip()
             card_type = line[:2].upper()
             content = line[2:].strip()
             args = self._parse_args(content)
@@ -113,23 +112,23 @@ class NecModel:
         for fr in self.fr_cards:
             self.model.fr_card(*fr.params())
 
-    def compute_vertical_pattern(self, freq_index=0, azimuth=0):
+    def compute_vertical_pattern(self, azimuth=0):
         #                   0  nTheta(90-el)  nPhi(az)   1  0  0  0   Theta0  Phi0  dTheta  dPhi  1  1
-        self.model.rp_card( 0, 91,            1,         1, 0, 0, 0,  90,     0,    -4,     4,    1, 1)
+        self.model.rp_card( 0, 361,            1,         1, 0, 0, 0,  90,     0,    -1,     1,    1, 1)
         rp = self.model.get_radiation_pattern(0)
         gains_db = rp.get_gain()[:,0]
         angles = (90 - rp.get_theta_angles()) * 3.1415 / 180.0
         return [angles, gains_db]
     
-    def compute_horizontal_pattern(self, freq_index=0, elevation=0):
-        self.model.rp_card( 0, 1,             91,        1, 0, 0, 0, 90,     0,    4,      4,   1, 1)
+    def compute_horizontal_pattern(self, elevation=0):
+        self.model.rp_card( 0, 1,             361,        1, 0, 0, 0, 90,     0,    1,      1,   1, 1)
         rp = self.model.get_radiation_pattern(0)
         gains_db = rp.get_gain()[0]
-        phis = rp.get_phi_angles() * 3.1415 / 180.0
-        return [phis, gains_db]
+        angles = rp.get_phi_angles() * 3.1415 / 180.0
+        return [angles, gains_db]
 
-    def sweep_frequency(self, start_freq, end_freq, step, forward_theta=90, forward_phi=0):
-        sweep = SweepResults(start_freq, end_freq, step)
+    def sweep_frequency(self, frequencies, forward_theta=90, forward_phi=0):
+        sweep = SweepResults(frequencies)
         old_fr_cards = self.fr_cards
 
         # impedance
@@ -159,55 +158,50 @@ class NecModel:
 
     # like sweep_frequency, but on the design frequency
     def compute_characteristics(self):
-        return self.sweep_frequency(self.fr_cards[0].frequency, 0, 0)
+        frequencies = list_frequencies(self.fr_cards[0].frequency, 0, 0)
+        return self.sweep_frequency(frequencies)
 
     def rescale_frequency(self, from_freq, to_freq):
         scale = from_freq / to_freq
-        for sw in self.gw_cards:
-            sw.p1 *= scale
-            sw.p2 *= scale
-            sw.radius *= scale
+        for gw in self.gw_cards:
+            gw.p1 *= scale
+            gw.p2 *= scale
+            gw.radius *= scale
         self.fr_cards[0].frequency = to_freq
 
     def rescale_radius(self, from_radius, to_radius):
-        sw0 = self.compute_characteristics()        
+        original_characteristics = self.compute_characteristics()        
         
-        for gw in reversed(self.gw_cards):
-            if gw.radius == from_radius:
-                gw.radius = to_radius                
+        for wire in reversed(self.gw_cards):
+            if wire.radius == from_radius:
+                wire.radius = to_radius                
 
-                x0 = np.array([1])
-                gw0 = copy.copy(gw)
+                original_wire = copy.copy(wire)
+                original_params = np.array([1]) # element length scaling factor
+                
                 res = scipy.optimize.minimize(
-                    self._optimization_target_function, x0, method='nelder-mead', 
-                    args=(sw0, gw0, gw), options={'xatol': 1e-8, 'maxfev': 6000})
+                    self._optimization_target_function, original_params, method='nelder-mead', 
+                    args=(original_characteristics, original_wire, wire), options={'xatol': 1e-4, 'maxfev': 600})
 
 
-    def _optimization_target_function(self, params, sw0, gw0, gw):
+    def _optimization_target_function(self, params, original_characteristics, original_wire, wire):
         # scale all coords relative to element center 
-        center = (gw0.p1 + gw0.p2) / 2
+        center = (original_wire.p1 + original_wire.p2) / 2
         scale = params[0]
-        gw.p1 = center + scale * (gw0.p1 - center)
-        gw.p2 = center + scale * (gw0.p2 - center)
+        wire.p1 = center + scale * (original_wire.p1 - center)
+        wire.p2 = center + scale * (original_wire.p2 - center)
 
         # compute antenna characteristics
         self.build_model()
-        sw = self.compute_characteristics()
+        characteristics = self.compute_characteristics()
 
-        # compute error
-        # errors = [np.abs(sw.return_losses[0] - sw0.return_losses[0]),
-        #           np.abs(sw.front_back_ratios[0] - sw0.front_back_ratios[0])]
-        errors = [sw0.return_losses[0] - sw.return_losses[0],                  
-                  sw0.front_back_ratios[0] - sw.front_back_ratios[0],                                              
-                  sw0.gains[0] - sw.gains[0]]
+        errors = [original_characteristics.return_losses[0] - characteristics.return_losses[0],                  
+                  original_characteristics.front_back_ratios[0] - characteristics.front_back_ratios[0],                                             
+                  original_characteristics.gains[0] - characteristics.gains[0]]
 
         return errors[0] * 0.5 + errors[1] * 0.3 + errors[2] * 2
       
-    
             
     def __repr__(self):
         return f"<NECParser: {len(self.cm_cards)} CM cards, {len(self.gw_cards)} GW wires, {len(self.ld_cards)} LD cards, " \
                f"{len(self.ex_cards)} EX cards, {len(self.gn_cards)} GN cards, {len(self.fr_cards)} FR cards>"
-        
-# def json_serializable(obj):
-# if isinstance(obj, complex): return obj.__str__()

@@ -24,3 +24,11 @@ def z_to_return_loss(z):
 def z_to_vswr(z):
     rc = np.abs(z_to_reflection_coeff(z))
     return (1 + rc) / (1 - rc)
+
+def list_frequencies(start_freq, end_freq, step):
+   if step == 0:
+       return [start_freq]
+   else:
+       count = int((end_freq - start_freq) / step) + 1;
+       return np.linspace(start_freq, end_freq, count)
+            

@@ -3,12 +3,8 @@
 from helper_func import *
 
 class SweepResults:
-    def __init__(self, start_freq, end_freq, step):
-        if step == 0:
-            self.frequencies = [start_freq]
-        else:
-            count = int((end_freq - start_freq) / step) + 1;
-            self.frequencies = np.linspace(start_freq, end_freq, count)
+    def __init__(self, frequencies):
+        self.frequencies = frequencies
         
         self.impedances: List(complex)
         self.reflection_coeffs: List(complex)
@@ -35,6 +31,7 @@ class SweepResults:
             self.max_return_loss = self.return_losses[idx]
             self.freq_of_max = self.frequencies[idx]
         else:
+            # fit parabola to find the exact minimum            
             yl = self.return_losses[idx-1]
             y0 = self.return_losses[idx]
             yr = self.return_losses[idx+1]            
