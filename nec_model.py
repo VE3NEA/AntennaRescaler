@@ -174,32 +174,33 @@ class NecModel:
         
         for wire in reversed(self.gw_cards):
             if wire.radius == from_radius:
-                wire.radius = to_radius                
+                wire.radius = to_radius                    
 
                 original_wire = copy.copy(wire)
-                original_params = np.array([1]) # element length scaling factor
+                original_params = np.array([1, 0])
                 
                 res = scipy.optimize.minimize(
                     self._optimization_target_function, original_params, method='nelder-mead', 
-                    args=(original_characteristics, original_wire, wire), options={'xatol': 1e-4, 'maxfev': 600})
+                    args=(original_characteristics, original_wire, wire), options={'fatol':0.005, 'xatol': 1e-8, 'maxfev': 600})
 
 
     def _optimization_target_function(self, params, original_characteristics, original_wire, wire):
         # scale all coords relative to element center 
         center = (original_wire.p1 + original_wire.p2) / 2
         scale = params[0]
-        wire.p1 = center + scale * (original_wire.p1 - center)
-        wire.p2 = center + scale * (original_wire.p2 - center)
+        offset = [params[1], 0, 0]
+        wire.p1 = center + scale * (original_wire.p1 - center) + offset
+        wire.p2 = center + scale * (original_wire.p2 - center) + offset
 
         # compute antenna characteristics
         self.build_model()
         characteristics = self.compute_characteristics()
 
-        errors = [original_characteristics.return_losses[0] - characteristics.return_losses[0],                  
-                  original_characteristics.front_back_ratios[0] - characteristics.front_back_ratios[0],                                             
-                  original_characteristics.gains[0] - characteristics.gains[0]]
+        return_loss_error = np.abs(original_characteristics.return_losses[0] - characteristics.return_losses[0])                  
+        front_back_error = np.abs(original_characteristics.front_back_ratios[0] - characteristics.front_back_ratios[0])                  
+        gain_error = np.abs(original_characteristics.gains[0] - characteristics.gains[0])
 
-        return errors[0] * 0.5 + errors[1] * 0.3 + errors[2] * 2
+        return return_loss_error * 2 + front_back_error * 1 + gain_error * 100
       
             
     def __repr__(self):
